@@ -5,23 +5,23 @@ import sqlite3
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 
-# アップロードフォルダ作成
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# 許可する拡張子
 ALLOWED_EXTENSIONS = {'mp4'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# DB初期化
+# DB初期化（カラム追加版）
 def init_db():
     conn = sqlite3.connect('videos.db')
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS videos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT
+            filename TEXT,
+            title TEXT,
+            description TEXT
         )
     ''')
     conn.commit()
@@ -29,28 +29,32 @@ def init_db():
 
 init_db()
 
-# ホーム（動画一覧）
 @app.route('/')
 def index():
     conn = sqlite3.connect('videos.db')
     c = conn.cursor()
-    c.execute("SELECT * FROM videos")
+    c.execute("SELECT * FROM videos ORDER BY id DESC")
     videos = c.fetchall()
     conn.close()
     return render_template('index.html', videos=videos)
 
-# アップロード
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():
     if request.method == 'POST':
         file = request.files['video']
+        title = request.form.get('title')
+        description = request.form.get('description')
+
         if file and allowed_file(file.filename):
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
             file.save(filepath)
 
             conn = sqlite3.connect('videos.db')
             c = conn.cursor()
-            c.execute("INSERT INTO videos (filename) VALUES (?)", (file.filename,))
+            c.execute(
+                "INSERT INTO videos (filename, title, description) VALUES (?, ?, ?)",
+                (file.filename, title, description)
+            )
             conn.commit()
             conn.close()
 
@@ -58,7 +62,6 @@ def upload():
 
     return render_template('upload.html')
 
-# 動画配信（ここが重要）
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
