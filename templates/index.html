@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>動画一覧</title>
+</head>
+<body>
+    <h1>動画一覧</h1>
+    <a href="/upload">アップロード</a>
+
+    {% for video in videos %}
+        <div>
+            <video width="320" controls>
+                <source src="/static/uploads/{{ video[1] }}" type="video/mp4">
+            </video>
+        </div>
+    {% endfor %}
+</body>
+</html>
