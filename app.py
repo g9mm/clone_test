@@ -1,9 +1,18 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, send_from_directory
 import os
 import sqlite3
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
+
+# アップロードフォルダ作成
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# 許可する拡張子
+ALLOWED_EXTENSIONS = {'mp4'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # DB初期化
 def init_db():
@@ -30,12 +39,12 @@ def index():
     conn.close()
     return render_template('index.html', videos=videos)
 
-# アップロード画面
+# アップロード
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():
     if request.method == 'POST':
         file = request.files['video']
-        if file:
+        if file and allowed_file(file.filename):
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
             file.save(filepath)
 
@@ -49,10 +58,10 @@ def upload():
 
     return render_template('upload.html')
 
-# 動画配信
-@app.route('/video/<filename>')
-def video(filename):
-    return redirect(url_for('static', filename=f'uploads/{filename}'))
+# 動画配信（ここが重要）
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 if __name__ == '__main__':
     app.run(debug=True)

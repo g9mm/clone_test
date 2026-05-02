@@ -7,7 +7,8 @@
     <h1>動画アップロード</h1>
 
     <form method="POST" enctype="multipart/form-data">
-        <input type="file" name="video">
+        <!-- mp4のみ選択可能 -->
+        <input type="file" name="video" accept="video/mp4" required>
         <button type="submit">アップロード</button>
     </form>
 
