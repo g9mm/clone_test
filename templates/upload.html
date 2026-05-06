@@ -1,30 +1,7 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>アップロード</title>
-</head>
-<body>
-    <h1>動画アップロード</h1>
-
-    <form method="POST" enctype="multipart/form-data">
-        <div>
-            <label>タイトル</label><br>
-            <input type="text" name="title" required>
-        </div>
-
-        <div>
-            <label>説明</label><br>
-            <textarea name="description" rows="4"></textarea>
-        </div>
-
-        <div>
-            <label>動画ファイル</label><br>
-            <input type="file" name="video" accept="video/mp4" required>
-        </div>
-
-        <button type="submit">アップロード</button>
-    </form>
-
-    <a href="/">戻る</a>
-</body>
-</html>
+<h2>アップロード</h2>
+<form method="POST" enctype="multipart/form-data">
+<input name="title" placeholder="タイトル" required><br>
+<textarea name="description" placeholder="説明"></textarea><br>
+<input type="file" name="video" accept="video/mp4" required><br>
+<button>投稿</button>
+</form>

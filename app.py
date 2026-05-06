@@ -3,7 +3,7 @@ import os, sqlite3, uuid, subprocess
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.secret_key = "secret"
+app.secret_key = "secret_key"
 
 UPLOAD_FOLDER = "uploads"
 THUMB_FOLDER = "thumbnails"
@@ -51,13 +51,16 @@ init_db()
 
 # ---------------- サムネ生成 ----------------
 def create_thumbnail(video_path, thumb_path):
-    subprocess.run([
-        "ffmpeg",
-        "-i", video_path,
-        "-ss", "00:00:01",
-        "-vframes", "1",
-        thumb_path
-    ])
+    try:
+        subprocess.run([
+            "ffmpeg",
+            "-i", video_path,
+            "-ss", "00:00:01",
+            "-vframes", "1",
+            thumb_path
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        print("FFmpegエラー（サムネ未生成）")
 
 # ---------------- ホーム ----------------
 @app.route('/')
@@ -76,26 +79,33 @@ def upload():
         return redirect('/login')
 
     if request.method == 'POST':
-        file = request.files['video']
+        file = request.files.get('video')
         title = request.form.get('title')
         desc = request.form.get('description')
 
+        if not file:
+            return "ファイルがありません"
+
+        if '.' not in file.filename or file.filename.rsplit('.',1)[1].lower() != 'mp4':
+            return "mp4のみ対応"
+
         ext = file.filename.rsplit('.',1)[1]
-        filename = f"{uuid.uuid4()}.{ext}"
-        filename = secure_filename(filename)
+        filename = secure_filename(f"{uuid.uuid4()}.{ext}")
 
-        path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(path)
+        video_path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(video_path)
 
-        # サムネ生成
-        thumb = f"{uuid.uuid4()}.jpg"
-        thumb_path = os.path.join(THUMB_FOLDER, thumb)
-        create_thumbnail(path, thumb_path)
+        # サムネ
+        thumb_name = f"{uuid.uuid4()}.jpg"
+        thumb_path = os.path.join(THUMB_FOLDER, thumb_name)
+        create_thumbnail(video_path, thumb_path)
 
         conn = sqlite3.connect('videos.db')
         c = conn.cursor()
-        c.execute("INSERT INTO videos (filename,title,description,thumbnail,user_id) VALUES (?,?,?,?,?)",
-                  (filename, title, desc, thumb, session['user_id']))
+        c.execute("""
+            INSERT INTO videos (filename,title,description,thumbnail,user_id)
+            VALUES (?,?,?,?,?)
+        """, (filename, title, desc, thumb_name, session['user_id']))
         conn.commit()
         conn.close()
 
@@ -103,35 +113,36 @@ def upload():
 
     return render_template('upload.html')
 
-# ---------------- 動画 ----------------
+# ---------------- 動画詳細 ----------------
 @app.route('/watch/<int:id>', methods=['GET','POST'])
 def watch(id):
     conn = sqlite3.connect('videos.db')
     c = conn.cursor()
 
-    # 再生数++
     c.execute("UPDATE videos SET views = views + 1 WHERE id=?", (id,))
 
     c.execute("SELECT * FROM videos WHERE id=?", (id,))
     video = c.fetchone()
 
+    if not video:
+        return "動画がありません"
+
     # コメント投稿
     if request.method == 'POST':
         text = request.form.get('comment')
-        c.execute("INSERT INTO comments (video_id,text) VALUES (?,?)", (id,text))
+        if text:
+            c.execute("INSERT INTO comments (video_id,text) VALUES (?,?)", (id,text))
 
-    # コメント取得
     c.execute("SELECT * FROM comments WHERE video_id=?", (id,))
     comments = c.fetchall()
 
-    # 関連動画
     c.execute("SELECT * FROM videos WHERE id != ? ORDER BY RANDOM() LIMIT 5", (id,))
     related = c.fetchall()
 
     conn.commit()
     conn.close()
 
-    return render_template("watch.html", video=video, comments=comments, related=related)
+    return render_template('watch.html', video=video, comments=comments, related=related)
 
 # ---------------- ログイン ----------------
 @app.route('/login', methods=['GET','POST'])
