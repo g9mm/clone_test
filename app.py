@@ -1,49 +1,65 @@
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory
-import os
-import sqlite3
-import uuid
+from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory
+import os, sqlite3, uuid, subprocess
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
+app.secret_key = "secret"
 
-# フォルダ作成
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+UPLOAD_FOLDER = "uploads"
+THUMB_FOLDER = "thumbnails"
 
-# 許可拡張子
-ALLOWED_EXTENSIONS = {'mp4'}
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(THUMB_FOLDER, exist_ok=True)
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-# DB初期化＆自動マイグレーション
+# ---------------- DB ----------------
 def init_db():
     conn = sqlite3.connect('videos.db')
     c = conn.cursor()
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS videos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT
-        )
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT,
+        password TEXT
+    )
     ''')
 
-    # カラム確認
-    c.execute("PRAGMA table_info(videos)")
-    columns = [col[1] for col in c.fetchall()]
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS videos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT,
+        title TEXT,
+        description TEXT,
+        thumbnail TEXT,
+        views INTEGER DEFAULT 0,
+        user_id INTEGER
+    )
+    ''')
 
-    if 'title' not in columns:
-        c.execute("ALTER TABLE videos ADD COLUMN title TEXT")
-
-    if 'description' not in columns:
-        c.execute("ALTER TABLE videos ADD COLUMN description TEXT")
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS comments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        video_id INTEGER,
+        text TEXT
+    )
+    ''')
 
     conn.commit()
     conn.close()
 
 init_db()
 
-# 一覧ページ
+# ---------------- サムネ生成 ----------------
+def create_thumbnail(video_path, thumb_path):
+    subprocess.run([
+        "ffmpeg",
+        "-i", video_path,
+        "-ss", "00:00:01",
+        "-vframes", "1",
+        thumb_path
+    ])
+
+# ---------------- ホーム ----------------
 @app.route('/')
 def index():
     conn = sqlite3.connect('videos.db')
@@ -53,58 +69,114 @@ def index():
     conn.close()
     return render_template('index.html', videos=videos)
 
-# アップロード
+# ---------------- アップロード ----------------
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():
+    if 'user_id' not in session:
+        return redirect('/login')
+
     if request.method == 'POST':
-        file = request.files.get('video')
+        file = request.files['video']
         title = request.form.get('title')
-        description = request.form.get('description')
+        desc = request.form.get('description')
 
-        if not file or file.filename == '':
-            return "ファイルが選択されていません"
+        ext = file.filename.rsplit('.',1)[1]
+        filename = f"{uuid.uuid4()}.{ext}"
+        filename = secure_filename(filename)
 
-        if not allowed_file(file.filename):
-            return "mp4ファイルのみアップロード可能です"
+        path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(path)
 
-        # 安全なファイル名に変換
-        ext = file.filename.rsplit('.', 1)[1].lower()
-        filename = secure_filename(f"{uuid.uuid4()}.{ext}")
-
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        # サムネ生成
+        thumb = f"{uuid.uuid4()}.jpg"
+        thumb_path = os.path.join(THUMB_FOLDER, thumb)
+        create_thumbnail(path, thumb_path)
 
         conn = sqlite3.connect('videos.db')
         c = conn.cursor()
-        c.execute(
-            "INSERT INTO videos (filename, title, description) VALUES (?, ?, ?)",
-            (filename, title, description)
-        )
+        c.execute("INSERT INTO videos (filename,title,description,thumbnail,user_id) VALUES (?,?,?,?,?)",
+                  (filename, title, desc, thumb, session['user_id']))
         conn.commit()
         conn.close()
 
-        return redirect(url_for('index'))
+        return redirect('/')
 
     return render_template('upload.html')
 
-# 動画配信
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-# 🎥 詳細ページ（YouTube風）
-@app.route('/watch/<int:video_id>')
-def watch(video_id):
+# ---------------- 動画 ----------------
+@app.route('/watch/<int:id>', methods=['GET','POST'])
+def watch(id):
     conn = sqlite3.connect('videos.db')
     c = conn.cursor()
-    c.execute("SELECT * FROM videos WHERE id = ?", (video_id,))
+
+    # 再生数++
+    c.execute("UPDATE videos SET views = views + 1 WHERE id=?", (id,))
+
+    c.execute("SELECT * FROM videos WHERE id=?", (id,))
     video = c.fetchone()
+
+    # コメント投稿
+    if request.method == 'POST':
+        text = request.form.get('comment')
+        c.execute("INSERT INTO comments (video_id,text) VALUES (?,?)", (id,text))
+
+    # コメント取得
+    c.execute("SELECT * FROM comments WHERE video_id=?", (id,))
+    comments = c.fetchall()
+
+    # 関連動画
+    c.execute("SELECT * FROM videos WHERE id != ? ORDER BY RANDOM() LIMIT 5", (id,))
+    related = c.fetchall()
+
+    conn.commit()
     conn.close()
 
-    if video is None:
-        return "動画が見つかりません", 404
+    return render_template("watch.html", video=video, comments=comments, related=related)
 
-    return render_template('watch.html', video=video)
+# ---------------- ログイン ----------------
+@app.route('/login', methods=['GET','POST'])
+def login():
+    if request.method == 'POST':
+        user = request.form.get('username')
+        pw = request.form.get('password')
 
-if __name__ == '__main__':
+        conn = sqlite3.connect('videos.db')
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE username=? AND password=?", (user,pw))
+        u = c.fetchone()
+        conn.close()
+
+        if u:
+            session['user_id'] = u[0]
+            return redirect('/')
+
+    return render_template('login.html')
+
+# ---------------- 登録 ----------------
+@app.route('/register', methods=['GET','POST'])
+def register():
+    if request.method == 'POST':
+        user = request.form.get('username')
+        pw = request.form.get('password')
+
+        conn = sqlite3.connect('videos.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO users (username,password) VALUES (?,?)",(user,pw))
+        conn.commit()
+        conn.close()
+
+        return redirect('/login')
+
+    return render_template('register.html')
+
+# ---------------- 配信 ----------------
+@app.route('/uploads/<f>')
+def video_file(f):
+    return send_from_directory(UPLOAD_FOLDER, f)
+
+@app.route('/thumb/<f>')
+def thumb_file(f):
+    return send_from_directory(THUMB_FOLDER, f)
+
+if __name__ == "__main__":
     app.run(debug=True)
