@@ -3,7 +3,7 @@
 set -o errexit
 
 # ffmpegのインストール
-#apt-get update
+pip update
 pip install -y ffmpeg
 
 # Pythonのパッケージインストール
